@@ -18,7 +18,7 @@ emojis = normalise_keys(
         "crossed fingers": ":crossed_fingers:",
         "fingers": ":crossed_fingers:",
         "pray": ":pray:",
-        "shrug": lambda x: paste_text("¯\_(ツ)_/¯"),
+        "shrug": lambda x: paste_text(r"¯\_(ツ)_/¯"),
     }
 )
 
@@ -42,7 +42,7 @@ def react(m):
         if old_clipboard != old_text:
             press("cmd-a", wait=2000)
             time.sleep(0.25)
-            utils.insert(old_text)
+            utils.paste_text(old_text)
     finally:
         clip.set(old_clipboard)
 

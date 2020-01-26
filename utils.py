@@ -1,13 +1,13 @@
-import string
 import collections
+import json
+import os
+from time import sleep
 
 from talon import clip, resource
 from talon.voice import Context, Str, press
-from time import sleep
-import json
-import os
 
-from .bundle_groups import TERMINAL_BUNDLES, FILETYPE_SENSITIVE_BUNDLES
+from . import vocab
+from .bundle_groups import FILETYPE_SENSITIVE_BUNDLES, TERMINAL_BUNDLES
 
 VIM_IDENTIFIER = "(Vim)"
 INCLUDE_TEENS_IN_NUMERALS = False
@@ -15,11 +15,30 @@ INCLUDE_TENS_IN_NUMERALS = False
 
 # mapping = json.load(open(os.path.join(os.path.dirname(__file__), "replace_words.json")))
 mapping = json.load(resource.open("replace_words.json"))
+mapping.update({k.lower(): v for k, v in vocab.vocab_alternate.items()})
 mappings = collections.defaultdict(dict)
 for k, v in mapping.items():
     mappings[len(k.split(" "))][k] = v
 
 punctuation = set(".,-!?/")
+
+
+ordinal_indexes = {
+    "first": 0,
+    "second": 1,
+    "third": 2,
+    "fourth": 3,
+    "fifth": 4,
+    "sixth": 5,
+    "seventh": 6,
+    "eighth": 7,
+    "ninth": 8,
+    "tenth": 9,
+    "final": -1,
+    "next": "next",  # Yeah, yeah, not a number.
+    "last": "last",
+    "this": "this",
+}
 
 
 def local_filename(file, name):
@@ -38,6 +57,8 @@ def replace_words(words, mapping, count):
     if len(words) < count:
         return words
 
+    # print(words, mapping, count)
+
     new_words = []
     i = 0
     while i < len(words) - count + 1:
@@ -55,7 +76,25 @@ def replace_words(words, mapping, count):
 
 
 def remove_dragon_junk(word):
-    return str(word).lstrip("\\").split("\\", 1)[0]
+    if word == ".\\point\\point":
+        return "point"
+    elif word == ".\\period\\period":
+        return "period"
+    else:
+        return str(word).lstrip("\\").split("\\", 1)[0].replace("-", " ").strip()
+
+
+def remove_appostrophe_s(words):
+    if "'s" in words:
+        new_words = []
+        for i, word in enumerate(words):
+            if word == "'s":
+                new_words[-1] += "s"
+            else:
+                new_words.append(word)
+        return new_words
+    else:
+        return words
 
 
 def parse_words(m, natural=False):
@@ -68,11 +107,22 @@ def parse_words(m, natural=False):
 
     # split compound words like "pro forma" into two words.
     words = list(map(remove_dragon_junk, words))
+    words = remove_appostrophe_s(words)
     words = sum([word.split(" ") for word in words], [])
-    words = list(map(lambda current_word: parse_word(current_word, not natural), words))
+    if not natural:
+        words = [word.lower() for word in words]
+
+    # replace words and all orders to make sure the replacement is more complete ... a more principled approach here would be nice
+    words = replace_words(words, mappings[4], 4)
+    words = replace_words(words, mappings[3], 3)
+    words = replace_words(words, mappings[2], 2)
+    words = replace_words(words, mappings[1], 1)
+    # words = list(map(lambda current_word: parse_word(current_word, not natural), words))
     words = replace_words(words, mappings[2], 2)
     words = replace_words(words, mappings[3], 3)
     words = replace_words(words, mappings[4], 4)
+    words = sum([word.split(" ") for word in words], [])
+
     return words
 
 
@@ -89,8 +139,12 @@ def insert(s):
     Str(s)(None)
 
 
+def string_capture(m):
+    return join_words(parse_words(m)).lower()
+
+
 def text(m):
-    insert(join_words(parse_words(m)).lower())
+    insert(string_capture(m))
 
 
 def snake_text(m):
@@ -115,26 +169,6 @@ def word(m):
         insert(text.lower())
     except AttributeError:
         pass
-
-
-def surround(left_surrounder, right_surrounder=None):
-    def func(i, word, last):
-        if i == 0:
-            word = left_surrounder + word
-        if last:
-            word += right_surrounder or left_surrounder
-        return word
-
-    return func
-
-
-def rot13(i, word, _):
-    out = ""
-    for c in word.lower():
-        if c in string.ascii_lowercase:
-            c = chr((((ord(c) - ord("a")) + 13) % 26) + ord("a"))
-        out += c
-    return out
 
 
 numeral_map = dict((str(n), n) for n in range(0, 10))
@@ -261,11 +295,20 @@ def paste_text(text):
         sleep(0.1)
 
 
-@preserve_clipboard
-def copy_selected():
-    press("cmd-c")
-    sleep(0.25)
-    return clip.get()
+# @preserve_clipboard
+# def copy_selected():
+#     press("cmd-c")
+#     sleep(0.25)
+#     return clip.get()
+
+
+def copy_selected(default=None):
+    try:
+        with clip.capture() as s:
+            press("cmd-c")
+        return s.get()
+    except clip.NoChange:
+        return default
 
 
 # The. following function is used to be able to repeat commands by following it by one or several numbers, e.g.:
@@ -289,7 +332,10 @@ def delay(amount=0.1):
 
 
 def is_in_bundles(bundles):
-    return lambda app, win: any(b in app.bundle for b in bundles)
+    def _is_in_bundles(app, win):
+        return any(b in app.bundle for b in bundles)
+
+    return _is_in_bundles
 
 
 def is_vim(app, win):
@@ -303,14 +349,14 @@ def is_not_vim(app, win):
     return not is_vim(app, win)
 
 
-def is_filetype(extensions=()):
+def is_filetype(extensions=(), default=False):
     def matcher(app, win):
         if is_in_bundles(FILETYPE_SENSITIVE_BUNDLES)(app, win):
             if any(ext in win.title for ext in extensions):
                 return True
             else:
                 return False
-        return True
+        return default
 
     return matcher
 
